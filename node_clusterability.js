@@ -58,16 +58,21 @@ for (let i = 0; i < NB_clusterings ; i++) {
   
   graph.forEachNode((node, attrs) => {
     let proximity = 0,
-      neighbors = 0;
+      neighbors = 0,
+      neighbor_communities = {};
+    neighbor_communities[attrs[louv_attr]] = true;
     graph.forEachNeighbor(node, (neighbor, neighbor_attrs) => {
       neighbors++;
       if (attrs[louv_attr] == neighbor_attrs[louv_attr])
         proximity++;
+      neighbor_communities[neighbor_attrs[louv_attr]] = true;
     });
-    const prox_attr = "community_proximity_" + i;
+    const percent_attr = "percentage_neighbors_in_same_community_" + i,
+      ratio_attr = "ratio_communities_neighbors_" + i;
     const new_attrs = {};
     new_attrs[louv_attr] = String(attrs[louv_attr]);
-    new_attrs[prox_attr] = neighbors != 0 ? proximity / neighbors : 1;
+    new_attrs[percent_attr] = neighbors != 0 ? proximity / neighbors : 1;
+    new_attrs[ratio_attr] = Object.keys(neighbor_communities).length / (neighbors + 1);
     graph.mergeNodeAttributes(node, new_attrs);
   });
 }
@@ -75,20 +80,27 @@ time1 = Date.now();
 console.log('Louvain processed (' + NB_clusterings + ' times) in:', (time1 - time0)/1000 + "s");
 time0 = time1;
 
-graph.forEachNode((node, attrs) => {
+const add_statistics = (node, attrs, field_prefix) => {
   const values = Object.keys(attrs)
-    .filter((x) => /^community_proximity_/.test(x))
+    .filter((x) => x.indexOf(field_prefix) == 0)
     .map((x) => attrs[x]);
   let averag = mean(values),
     varian = variance(values, averag),
-    stddev = std_deviation(values, varian);
-  graph.mergeNodeAttributes(node, {
-    "clusterability_mean": averag,
-    "clusterability_variance": varian,
-    "clusterability_std_deviation": stddev
-  });
-  for (let i = 0; i < NB_clusterings ; i++)
-    graph.removeNodeAttribute(node, "community_proximity_" + i)
+    stddev = std_deviation(values, varian),
+    new_attrs = {};
+  new_attrs[field_prefix + "mean"] = mean(values);
+  new_attrs[field_prefix + "variance"] = variance(values, new_attrs[field_prefix + "mean"]);
+  new_attrs[field_prefix + "std_deviation"] = std_deviation(values, new_attrs[field_prefix + "variance"]);
+  graph.mergeNodeAttributes(node, new_attrs);
+};
+
+graph.forEachNode((node, attrs) => {
+  add_statistics(node, attrs, "percentage_neighbors_in_same_community_");
+  add_statistics(node, attrs, "ratio_communities_neighbors_");
+  for (let i = 0; i < NB_clusterings ; i++) {
+    graph.removeNodeAttribute(node, "percentage_neighbors_in_same_community_" + i);
+    graph.removeNodeAttribute(node, "ratio_communities_neighbors_" + i);
+  }
 });
 time1 = Date.now();
 console.log('Louvain statistics processed in:', (time1 - time0)/1000 + "s");
