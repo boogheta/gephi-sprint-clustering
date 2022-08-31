@@ -112,7 +112,7 @@ time0 = time1;
 
 const node_pairs = {};
 const computePair = (n1, n2, n1_attrs, n2_attrs) => {
-  var nodepair = n1+'|'+n2;
+  var node_pair = n1+'|'+n2;
   let identical_cluster = 0;
   for (let i = 0; i < NB_clusterings; i++) {
     const louv_attr = "louvain_" + i;
@@ -123,8 +123,9 @@ const computePair = (n1, n2, n1_attrs, n2_attrs) => {
   // identicalsShare = identical_cluster / NB_clusterings
   // hhIndex = shareOfIdenticals**2 + (1 - shareOfIdenticals)**2
   // hhIndex_norm = (hhIndex - 1/2) / (1 - 1/2)
-  node_pairs[nodepair] = 2 * (identical_cluster / NB_clusterings - 1/2)**2 + 1/2; // (
+  node_pairs[node_pair] = 2 * (identical_cluster / NB_clusterings - 1/2)**2 + 1/2; // (
 };
+
 // Compute it for each edge
 graph.forEachEdge((edge, edge_attrs, n1, n2, n1_attrs, n2_attrs) => computePair(n1, n2, n1_attrs, n2_attrs));
 // We should normally compute it for all node pairs so N², let's instead sample it so that we're at worst N*log(N)
@@ -142,14 +143,14 @@ while (missing_pairs_for_sample > 0) {
   }
 }
 
-Object.keys(node_pairs).forEach(function(nodepair){
-  const [n1, n2] = nodepair.split('|')
-  var hh = node_pairs[nodepair]
+Object.keys(node_pairs).forEach(function(node_pair){
+  const [n1, n2] = node_pair.split('|'),
+    hh = node_pairs[node_pair];
   graph.mergeNodeAttributes(n1, {
-    ambiguity_new: (graph.getNodeAttribute(n1, "ambiguity_new") || 0) + (1 - hh)
+    ambiguity_new: (graph.getNodeAttribute(n1, "ambiguity_new") || 0) + (1 - hh) / graph.order
   });
   graph.mergeNodeAttributes(n2, {
-    ambiguity_new: (graph.getNodeAttribute(n2, "ambiguity_new") || 0) + (1 - hh)
+    ambiguity_new: (graph.getNodeAttribute(n2, "ambiguity_new") || 0) + (1 - hh) / graph.order
   });
 });
 time1 = Date.now();
