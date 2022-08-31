@@ -7,8 +7,8 @@ import {density} from 'graphology-metrics/graph/density.js';
 
 const args = process.argv.slice(2);
 const filename = args[0];
-const NB_clusterings = (args.length <= 2 ? 200 : parseInt(args[1]));
-const NB_FA2_ITERATIONS = (args.length <= 3 ? 100 : parseInt(args[2]));
+const NB_clusterings = (args.length < 2 ? 200 : parseInt(args[1]));
+const NB_FA2_ITERATIONS = (args.length < 3 ? 100 : parseInt(args[2]));
 
 const mean = (values) => {
   return (values.reduce((sum, current) => sum + current)) / values.length;
@@ -39,21 +39,23 @@ console.log('Number of nodes:', graph.order);
 console.log('Number of edges:', graph.size);
 console.log('Graph density:', density(graph));
 
-let time0 = Date.now();
-// Préspatialize graph
-forceAtlas2.assign(graph, {
-  iterations: NB_FA2_ITERATIONS,
-  settings: forceAtlas2.inferSettings(graph)
-});
-let time1 = Date.now();
-console.log('ForceAtlas2 processed (' + NB_FA2_ITERATIONS + ' iterations) in:', (time1 - time0)/1000 + "s");
-time0 = time1;
+// Prespatialize graph
+let time0 = Date.now(), time1 = null;
+if (NB_FA2_ITERATIONS) {
+  forceAtlas2.assign(graph, {
+    iterations: NB_FA2_ITERATIONS,
+    settings: forceAtlas2.inferSettings(graph)
+  });
+  time1 = Date.now();
+  console.log('ForceAtlas2 processed (' + NB_FA2_ITERATIONS + ' iterations) in:', (time1 - time0)/1000 + "s");
+  time0 = time1;
+};
 
-// Computing Louvain communities
-for (let i = 0; i < NB_clusterings ; i++) {
+// Computing Louvain communities and pre-computing Guillaume's methods
+for (let i = 0; i < NB_clusterings; i++) {
   const louv_attr = "louvain_" + i;
   louvain.assign(graph, {
-    nodeCommunityAttribute: louv_attr
+    nodeCommunityAttribute: louv_attr,
   });
   
   graph.forEachNode((node, attrs) => {
@@ -97,13 +99,61 @@ const add_statistics = (node, attrs, field_prefix) => {
 graph.forEachNode((node, attrs) => {
   add_statistics(node, attrs, "percentage_neighbors_in_same_community_");
   add_statistics(node, attrs, "ratio_communities_neighbors_");
-  for (let i = 0; i < NB_clusterings ; i++) {
+  for (let i = 0; i < NB_clusterings; i++) {
     graph.removeNodeAttribute(node, "percentage_neighbors_in_same_community_" + i);
     graph.removeNodeAttribute(node, "ratio_communities_neighbors_" + i);
   }
 });
 time1 = Date.now();
 console.log('Louvain statistics processed in:', (time1 - time0)/1000 + "s");
+time0 = time1;
+
+// Méthode Mathieu
+
+const node_pairs = {};
+const computePair = (n1, n2, n1_attrs, n2_attrs) => {
+  var nodepair = n1+'|'+n2;
+  let identical_cluster = 0;
+  for (let i = 0; i < NB_clusterings; i++) {
+    const louv_attr = "louvain_" + i;
+    if (n1_attrs[louv_attr] == n2_attrs[louv_attr])
+      identical_cluster++;
+  }
+  // Compute Herfindahl-Hirschmann index normalized
+  // identicalsShare = identical_cluster / NB_clusterings
+  // hhIndex = shareOfIdenticals**2 + (1 - shareOfIdenticals)**2
+  // hhIndex_norm = (hhIndex - 1/2) / (1 - 1/2)
+  node_pairs[nodepair] = 2 * (identical_cluster / NB_clusterings - 1/2)**2 + 1/2; // (
+};
+// Compute it for each edge
+graph.forEachEdge((edge, edge_attrs, n1, n2, n1_attrs, n2_attrs) => computePair(n1, n2, n1_attrs, n2_attrs));
+// We should normally compute it for all node pairs so N², let's instead sample it so that we're at worst N*log(N)
+let missing_pairs_for_sample = Math.min(Math.max(50, 10*Math.log(graph.order)), graph.order - 1) * graph.order,
+  nodes = graph.nodes(),
+  n1, n2, n1_attrs, n2_attrs;
+while (missing_pairs_for_sample > 0) {
+  n1 = nodes[Math.floor(Math.random() * graph.order)];
+  n2 = nodes[Math.floor(Math.random() * graph.order)];
+  if (n1 !== n2 && node_pairs[n1+'|'+n2] === undefined) {
+    n1_attrs = graph.getNodeAttributes(n1);
+    n2_attrs = graph.getNodeAttributes(n2);
+    computePair(n1, n2, n1_attrs, n2_attrs);
+    missing_pairs_for_sample--;
+  }
+}
+
+Object.keys(node_pairs).forEach(function(nodepair){
+  const [n1, n2] = nodepair.split('|')
+  var hh = node_pairs[nodepair]
+  graph.mergeNodeAttributes(n1, {
+    ambiguity_new: (graph.getNodeAttribute(n1, "ambiguity_new") || 0) + (1 - hh)
+  });
+  graph.mergeNodeAttributes(n2, {
+    ambiguity_new: (graph.getNodeAttribute(n2, "ambiguity_new") || 0) + (1 - hh)
+  });
+});
+time1 = Date.now();
+console.log("Louvain ambiguity (Mathieu's method processed in:", (time1 - time0)/1000 + "s");
 time0 = time1;
 
 fs.writeFileSync(args[0].replace(/\.json/, "_with_louvains.json"), JSON.stringify(graph.export()));
